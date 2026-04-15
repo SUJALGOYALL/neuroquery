@@ -153,7 +153,7 @@ EXECUTE
 ## 🛠️ Setup Instructions
 
 ### 1. Clone the repository
-git clone https://github.com/your-username/neuroquery.git  
+git clone https://github.com/SUJALGOYALL/neuroquery.git
 cd neuroquery  
 
 ### 2. Create virtual environment
