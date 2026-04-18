@@ -1,12 +1,12 @@
 from db.connection import get_connection
-from db.executor import execute_query
-from llm.generator import generate_sql
 from rag.rag_pipeline import RAGPipeline
-from utils.validator import is_safe, validate_sql, extract_tables
-# ✅ Clean imports (remove duplicates)
 from utils.schema import get_schema, get_primary_keys, get_foreign_keys
 
-rag_instance = None   # global
+# 🔥 NEW: import graph
+from agent.sql_agent import build_graph
+
+
+rag_instance = None  # global
 
 
 def main():
@@ -17,51 +17,49 @@ def main():
 
     question = input("Ask your query: ")
 
-    # 🔥 Get schema + metadata
+    # ================= SCHEMA =================
     full_schema = get_schema(cursor)
     relationships = get_foreign_keys(cursor)
     primary_keys = get_primary_keys(cursor)
 
     print("\nFull Schema:\n", full_schema)
 
-    # 🔥 Initialize RAG once (FIXED HERE)
+    # ================= RAG =================
     if rag_instance is None:
         rag_instance = RAGPipeline(full_schema, relationships, primary_keys)
 
-    # 🔥 Retrieve relevant schema
     relevant_schema = rag_instance.retrieve(question)
     print("\nRAG Schema:\n", relevant_schema)
 
-    # 🔥 Generate SQL
-    sql_query = generate_sql(question, relevant_schema)
-    print("\nGenerated SQL:\n", sql_query)
+    # ================= LANGGRAPH =================
+    graph = build_graph()
 
-    # Validate SQL
-    is_valid, parsed = validate_sql(sql_query)
+    state = {
+        "question": question,
+        "schema": relevant_schema,
+        "sql": None,
+        "feedback": "",
+        "df": None,
+        "error": None,
+        "attempt": 0,
+        "cursor": cursor
+    }
 
-    if not is_valid:
-        print("❌ SQL Validation Error:", parsed)
-        return
+    result = graph.invoke(state)
 
-    # Extract tables (debug)
-    tables = extract_tables(parsed)
-    print("📊 Tables used:", tables)
+    # ================= OUTPUT =================
+    if result.get("error"):
+        print("❌ Error:", result["error"])
 
-    # Safety check
-    if not is_safe(sql_query):
-        print("🚫 Unsafe query blocked!")
-        return
-
-    # 🔥 Execute
-    try:
-        rows, columns = execute_query(cursor, sql_query)
+    elif result.get("df") is not None:
+        print("\nFinal SQL:\n", result.get("sql"))
 
         print("\nResults:\n")
-        for row in rows:
+        for row in result["df"].values:
             print(row)
 
-    except Exception as e:
-        print("Error:", e)
+    else:
+        print("❌ Failed to generate correct SQL after retries.")
 
     cursor.close()
     conn.close()
