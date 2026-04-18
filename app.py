@@ -61,7 +61,20 @@ if question:
     progress.progress(40)
 
     # ================= JOIN CONTEXT =================
-    join_context = get_relevant_joins(join_graph, relevant_schema)
+    from utils.join_path_finder import (
+        find_multi_join_path,
+        format_join_path,
+        extract_tables_from_schema
+    )
+
+    # extract tables from RAG
+    tables = extract_tables_from_schema(relevant_schema)
+
+    # find optimal path
+    join_path = find_multi_join_path(join_graph, tables)
+
+    # format for LLM
+    join_context = format_join_path(join_path)
 
     # ================= RETRY LOOP (FIXED UX) =================
     MAX_RETRIES = 3
