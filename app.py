@@ -1,18 +1,15 @@
 import streamlit as st
 import pandas as pd
+import time
+
 from db.connection import get_connection
 from db.executor import execute_query
 from llm.generator import generate_sql
 from utils.schema import get_schema, get_foreign_keys
 from rag.rag_pipeline import RAGPipeline
 
-# 🔥 Validator
 from utils.validator import is_safe, validate_sql, extract_tables, extract_columns
-
-# 🔥 Intent Checker
 from correction.intent_checker import check_intent
-
-# 🔥 JOIN GRAPH
 from utils.join_graph import build_join_graph, get_relevant_joins
 
 
@@ -47,7 +44,6 @@ if question:
     # ================= SCHEMA =================
     st.write("🔍 Fetching schema...")
     full_schema = get_schema(cursor)
-    steps["full_schema"] = full_schema
     progress.progress(20)
 
     # ================= JOIN GRAPH =================
@@ -62,93 +58,98 @@ if question:
 
     rag = st.session_state.rag
     relevant_schema = rag.retrieve(question)
-
-    steps["relevant_schema"] = relevant_schema
     progress.progress(40)
 
-    # ================= FILTER JOINS =================
+    # ================= JOIN CONTEXT =================
     join_context = get_relevant_joins(join_graph, relevant_schema)
-    steps["join_context"] = join_context
 
-    # ================= COMBINE CONTEXT =================
-    enhanced_schema = (
-        relevant_schema
-        + "\n\nValid Relationships:\n"
-        + (join_context if join_context else "No relationships found")
-    )
-
-    # ================= 🔥 RETRY LOOP =================
-    MAX_RETRIES = 2
+    # ================= RETRY LOOP (FIXED UX) =================
+    MAX_RETRIES = 3
     feedback = ""
     final_df = None
     final_sql = None
 
-    for attempt in range(MAX_RETRIES):
+    status_box = st.empty()
+    log_box = st.container()
 
-        st.write(f"🤖 Attempt {attempt + 1}")
+    with st.spinner("🤖 Thinking..."):
 
-        # ===== GENERATE (NOW WITH JOIN CONTEXT 🔥) =====
-        raw_sql = generate_sql(question + feedback, enhanced_schema)
-        cleaned_sql = clean_sql(raw_sql)
+        for attempt in range(MAX_RETRIES):
 
-        steps["raw_sql"] = raw_sql
-        steps["generated_sql"] = cleaned_sql
+            status_box.info(f"🤖 Attempt {attempt + 1}")
 
-        progress.progress(60)
+            # ===== GENERATE =====
+            raw_sql = generate_sql(question + feedback, relevant_schema, join_context)
+            cleaned_sql = clean_sql(raw_sql)
 
-        # ===== VALIDATE =====
-        is_valid, parsed = validate_sql(cleaned_sql)
+            with log_box:
+                st.markdown(f"### 🔹 Attempt {attempt + 1}")
+                st.code(cleaned_sql, language="sql")
 
-        if not is_valid:
-            feedback = f"\nFix SQL syntax error: {parsed}"
-            continue
+            progress.progress(60)
 
-        steps["parsed_sql"] = str(parsed)
-        steps["tables"] = extract_tables(parsed)
-        steps["columns"] = extract_columns(parsed)
-        steps["query_type"] = type(parsed).__name__
+            # ===== VALIDATE =====
+            is_valid, parsed = validate_sql(cleaned_sql)
 
-        # ===== SAFETY =====
-        if not is_safe(cleaned_sql):
-            st.error("🚫 Unsafe query detected!")
-            st.stop()
+            if not is_valid:
+                feedback = f"\nFix SQL syntax error: {parsed}"
+                with log_box:
+                    st.warning(f"❌ Syntax Error: {parsed}")
+                continue
 
-        # ===== EXECUTE =====
-        try:
-            rows, columns = execute_query(cursor, cleaned_sql)
-            df = pd.DataFrame(rows, columns=columns)
-        except Exception as e:
-            feedback = f"\nFix this SQL error: {str(e)}"
-            continue
+            # ===== SAFETY FIX (IMPORTANT) =====
+            if not is_safe(cleaned_sql):
+                feedback = "\nQuery used DELETE/UPDATE. Convert it to SELECT."
+                with log_box:
+                    st.warning("🚫 Unsafe query → converting to SELECT")
+                continue
 
-        # ===== EMPTY RESULT CHECK =====
-        if df.empty:
-            feedback = "\nQuery returned no results. Avoid unnecessary JOINs."
-            continue
+            # ===== EXECUTE =====
+            try:
+                rows, columns = execute_query(cursor, cleaned_sql)
+                df = pd.DataFrame(rows, columns=columns)
+            except Exception as e:
+                feedback = f"\nFix this SQL error: {str(e)}"
+                with log_box:
+                    st.error(f"❌ Execution Error: {str(e)}")
+                continue
 
-        # ===== INTENT CHECK =====
-        intent_result = check_intent(question, cleaned_sql)
+            # ===== EMPTY RESULT =====
+            if df.empty:
+                feedback = "\nQuery returned no results. Avoid unnecessary JOINs."
+                with log_box:
+                    st.warning("⚠️ Empty result → retrying")
+                continue
 
-        if not intent_result.get("is_correct", True):
-            issue = intent_result.get("issue", "")
-            st.warning(f"⚠️ Intent Issue: {issue}")
+            # ===== INTENT CHECK =====
+            intent_result = check_intent(question, cleaned_sql)
 
-            feedback = f"\nFix this issue: {issue}"
-            continue
+            if not intent_result.get("is_correct", True):
+                issue = intent_result.get("issue", "")
+                feedback = f"\nFix this issue: {issue}"
 
-        # ✅ SUCCESS
-        final_df = df
-        final_sql = cleaned_sql
-        steps["result"] = df
-        break
+                with log_box:
+                    st.warning(f"⚠️ Intent Issue: {issue}")
+                continue
+
+            # ✅ SUCCESS
+            final_df = df
+            final_sql = cleaned_sql
+
+            with log_box:
+                st.success("✅ Query successful")
+
+            break
+
+            time.sleep(0.3)  # small delay for UX feel
 
     progress.progress(100)
+    status_box.success("✅ Completed")
 
-    # ================= UI =================
+    # ================= OUTPUT =================
 
     tab1, tab2, tab3 = st.tabs(["📊 Result", "🧠 SQL", "🐞 Debug"])
 
-    # ===== RESULT =====
     with tab1:
         st.subheader("📊 Query Result")
         if final_df is not None:
@@ -156,31 +157,20 @@ if question:
         else:
             st.error("❌ Failed after retries")
 
-    # ===== SQL =====
     with tab2:
         st.subheader("🧠 Final SQL")
         st.code(final_sql or "No SQL generated", language="sql")
 
-    # ===== DEBUG =====
     with tab3:
 
         with st.expander("📦 Full Schema"):
-            st.text(steps.get("full_schema", ""))
+            st.text(full_schema)
 
         with st.expander("🎯 RAG Schema"):
-            st.text(steps.get("relevant_schema", ""))
+            st.text(relevant_schema)
 
         with st.expander("🔗 Join Context"):
-            st.text(steps.get("join_context", ""))
-
-        with st.expander("🧾 Raw SQL"):
-            st.code(steps.get("raw_sql", ""), language="sql")
-
-        with st.expander("🧠 SQLGlot Analysis"):
-            st.code(steps.get("parsed_sql", ""), language="sql")
-
-            st.write("📊 Tables:", steps.get("tables", []))
-            st.write("📄 Columns:", steps.get("columns", []))
+            st.text(join_context)
 
     # ================= SIDEBAR =================
     st.sidebar.title("🧾 Debug Logs")
