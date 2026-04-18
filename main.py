@@ -2,9 +2,11 @@ from db.connection import get_connection
 from rag.rag_pipeline import RAGPipeline
 from utils.schema import get_schema, get_primary_keys, get_foreign_keys
 
-# 🔥 NEW: import graph
+# 🔥 Graph
 from agent.sql_agent import build_graph
 
+# 🔥 JOIN GRAPH
+from utils.join_graph import build_join_graph, get_relevant_joins
 
 rag_instance = None  # global
 
@@ -24,6 +26,9 @@ def main():
 
     print("\nFull Schema:\n", full_schema)
 
+    # ================= JOIN GRAPH =================
+    join_graph = build_join_graph(relationships)
+
     # ================= RAG =================
     if rag_instance is None:
         rag_instance = RAGPipeline(full_schema, relationships, primary_keys)
@@ -31,12 +36,24 @@ def main():
     relevant_schema = rag_instance.retrieve(question)
     print("\nRAG Schema:\n", relevant_schema)
 
+    # ================= FILTER JOINS =================
+    join_context = get_relevant_joins(join_graph, relevant_schema)
+
+    print("\nJoin Context:\n", join_context)
+
+    # ================= COMBINE CONTEXT =================
+    enhanced_schema = (
+        relevant_schema
+        + "\n\nValid Relationships:\n"
+        + (join_context if join_context else "No relationships found")
+    )
+
     # ================= LANGGRAPH =================
     graph = build_graph()
 
     state = {
         "question": question,
-        "schema": relevant_schema,
+        "schema": enhanced_schema,  # 🔥 IMPORTANT FIX
         "sql": None,
         "feedback": "",
         "df": None,
@@ -67,3 +84,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

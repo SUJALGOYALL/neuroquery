@@ -3,14 +3,17 @@ import pandas as pd
 from db.connection import get_connection
 from db.executor import execute_query
 from llm.generator import generate_sql
-from utils.schema import get_schema
+from utils.schema import get_schema, get_foreign_keys
 from rag.rag_pipeline import RAGPipeline
 
 # 🔥 Validator
 from utils.validator import is_safe, validate_sql, extract_tables, extract_columns
 
-# 🔥 NEW: Intent Checker
+# 🔥 Intent Checker
 from correction.intent_checker import check_intent
+
+# 🔥 JOIN GRAPH
+from utils.join_graph import build_join_graph, get_relevant_joins
 
 
 # ================= CLEAN SQL =================
@@ -28,7 +31,7 @@ def clean_sql(sql):
 
 # ================= UI =================
 st.set_page_config(page_title="NeuroQuery", layout="wide")
-st.title("🧠 NeuroQuery - NLP to SQL (Self-Correcting)")
+st.title("🧠 NeuroQuery - NLP to SQL (Self-Correcting + Join-Aware)")
 
 question = st.text_input("💬 Ask your query:")
 
@@ -47,6 +50,10 @@ if question:
     steps["full_schema"] = full_schema
     progress.progress(20)
 
+    # ================= JOIN GRAPH =================
+    relationships = get_foreign_keys(cursor)
+    join_graph = build_join_graph(relationships)
+
     # ================= RAG =================
     st.write("🧠 Retrieving relevant schema using RAG...")
 
@@ -59,6 +66,17 @@ if question:
     steps["relevant_schema"] = relevant_schema
     progress.progress(40)
 
+    # ================= FILTER JOINS =================
+    join_context = get_relevant_joins(join_graph, relevant_schema)
+    steps["join_context"] = join_context
+
+    # ================= COMBINE CONTEXT =================
+    enhanced_schema = (
+        relevant_schema
+        + "\n\nValid Relationships:\n"
+        + (join_context if join_context else "No relationships found")
+    )
+
     # ================= 🔥 RETRY LOOP =================
     MAX_RETRIES = 2
     feedback = ""
@@ -69,8 +87,8 @@ if question:
 
         st.write(f"🤖 Attempt {attempt + 1}")
 
-        # ===== GENERATE =====
-        raw_sql = generate_sql(question + feedback, relevant_schema)
+        # ===== GENERATE (NOW WITH JOIN CONTEXT 🔥) =====
+        raw_sql = generate_sql(question + feedback, enhanced_schema)
         cleaned_sql = clean_sql(raw_sql)
 
         steps["raw_sql"] = raw_sql
@@ -103,12 +121,12 @@ if question:
             feedback = f"\nFix this SQL error: {str(e)}"
             continue
 
-        # ===== EMPTY RESULT CHECK 🔥 =====
+        # ===== EMPTY RESULT CHECK =====
         if df.empty:
             feedback = "\nQuery returned no results. Avoid unnecessary JOINs."
             continue
 
-        # ===== INTENT CHECK 🔥 =====
+        # ===== INTENT CHECK =====
         intent_result = check_intent(question, cleaned_sql)
 
         if not intent_result.get("is_correct", True):
@@ -151,6 +169,9 @@ if question:
 
         with st.expander("🎯 RAG Schema"):
             st.text(steps.get("relevant_schema", ""))
+
+        with st.expander("🔗 Join Context"):
+            st.text(steps.get("join_context", ""))
 
         with st.expander("🧾 Raw SQL"):
             st.code(steps.get("raw_sql", ""), language="sql")

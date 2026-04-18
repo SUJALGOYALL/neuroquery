@@ -6,48 +6,72 @@ from llm.prompts import sql_prompt
 def clean_sql(sql: str) -> str:
     sql = sql.strip()
 
-    # Remove markdown blocks ```sql ... ```
     if sql.startswith("```"):
         sql = sql.replace("```sql", "").replace("```", "").strip()
 
-    # Remove leading "sql" word if present
     if sql.lower().startswith("sql"):
         sql = sql[3:].strip()
 
     return sql
 
 
-# ================= GENERATE SQL =================
-def generate_sql(question, schema):
-    prompt = sql_prompt(schema, question)
+# ================= CORE LLM CALL =================
+def call_llm(prompt: str) -> str:
+    """
+    Generic LLM caller (used everywhere)
+    """
+    try:
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You strictly follow instructions and output exactly what is asked."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0
+        )
 
-    # 🔥 Add strict instructions (VERY IMPORTANT)
+        return response.choices[0].message.content.strip()
+
+    except Exception as e:
+        raise Exception(f"LLM Call Failed: {e}")
+
+
+# ================= GENERATE SQL =================
+def generate_sql(question, schema, join_context=""):
+    """
+    SQL generation function
+    """
+
+    prompt = sql_prompt(schema, question, join_context)
+
+    # 🔥 Extra enforcement layer
     strict_rules = """
-STRICT RULES:
-- Only return SQL query
+STRICT OUTPUT RULES:
+- Return ONLY SQL query
 - No markdown (no ``` )
 - No explanation
 - No comments
 - Do NOT start with 'sql'
 - Query must be valid PostgreSQL
-- Only SELECT queries allowed
+- ONLY SELECT queries allowed
 """
 
     final_prompt = prompt + "\n" + strict_rules
 
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",  # ✅ safer + faster for you
-            messages=[{"role": "user", "content": final_prompt}],
-            temperature=0
-        )
+    raw_sql = call_llm(final_prompt)
 
-        raw_sql = response.choices[0].message.content
+    return clean_sql(raw_sql)
 
-        # ✅ Clean at backend
-        cleaned_sql = clean_sql(raw_sql)
 
-        return cleaned_sql
-
-    except Exception as e:
-        raise Exception(f"LLM Generation Failed: {e}")
+# ================= GENERIC MODEL CALL =================
+def call_model(prompt: str) -> str:
+    """
+    Used for intent checker / future agents
+    """
+    return call_llm(prompt)
