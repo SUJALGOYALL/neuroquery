@@ -58,53 +58,61 @@ OUTPUT RULES:
 
 
 # ================= INTENT CHECK PROMPT =================
-def intent_prompt(question, sql):
+def intent_prompt(question, sql, schema, join_context, hint=""):
     return f"""
 You are a SQL verifier for a READ-ONLY system.
 
-User Question:
+USER QUESTION:
 {question}
 
-Generated SQL:
+GENERATED SQL:
 {sql}
 
-🚨 STRICT SYSTEM RULES:
-- ONLY SELECT queries are allowed
-- DELETE / UPDATE / INSERT are NOT allowed
-- If user asked for DELETE/UPDATE:
-  → SELECT replacement is CORRECT
+RELEVANT SCHEMA:
+{schema}
 
----
+VALID RELATIONSHIPS (joins):
+{join_context}
+
+OPTIONAL HINT:
+{hint if hint else "None"}
 
 YOUR TASK:
-Check whether the SQL correctly answers the question.
+Determine whether the SQL correctly answers the user's question.
 
-Focus on:
-✔ correct table usage
-✔ correct filtering conditions
-✔ correct joins (if any)
-✔ no unnecessary joins
+Evaluate strictly on:
 
----
+1. TABLE USAGE
+- Correct tables used?
+- Missing or unnecessary tables?
 
-IMPORTANT:
-- DO NOT expect DELETE queries
-- DO NOT penalize SELECT replacing DELETE
-- If SQL uses DELETE/UPDATE → mark incorrect
+2. JOIN CORRECTNESS
+- Joins valid according to relationships?
+- Missing join paths?
+- Any incorrect join condition?
 
----
+3. FILTER LOGIC
+- WHERE clause matches user intent?
 
-RETURN ONLY JSON:
+4. AGGREGATION & GRANULARITY
+- Does aggregation match the question?
+- Is data level correct?
+  (e.g., order-level vs item-level mismatch)
 
-If correct:
+5. OUTPUT
+- Are selected columns correct?
+
+RULES:
+- Only SELECT queries allowed
+- If user intent is DELETE/UPDATE → SELECT equivalent is acceptable
+- DO NOT generate or modify SQL
+- DO NOT suggest corrected query
+- ONLY evaluate correctness
+
+Return ONLY valid JSON:
+
 {{
-  "is_correct": true,
-  "issue": ""
-}}
-
-If incorrect:
-{{
-  "is_correct": false,
-  "issue": "short explanation of what is wrong"
+  "is_correct": true or false,
+  "issue": "clear and specific explanation if incorrect, else empty string"
 }}
 """

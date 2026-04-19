@@ -1,5 +1,9 @@
 def execute_query(cursor, query):
-    cursor.execute(query)
-    rows = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
-    return rows, columns
+    try:
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        cols = [desc[0] for desc in cursor.description]
+        return rows, cols
+    except Exception as e:
+        cursor.connection.rollback()   # 🔥 ADD THIS
+        raise e

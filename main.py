@@ -82,6 +82,15 @@ def main():
     conn.close()
 
 
+
+# ================= graph =================
+from agent.sql_agent import build_graph
+
+graph = build_graph()
+
+print("\n🧠 AGENT GRAPH:\n")
+print(graph.get_graph().print_ascii())
+
 if __name__ == "__main__":
     main()
 
