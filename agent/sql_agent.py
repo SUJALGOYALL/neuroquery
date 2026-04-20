@@ -1,7 +1,7 @@
 from langgraph.graph import StateGraph, END
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional ,List
 import pandas as pd
-
+from sympy import python
 from llm.generator import generate_sql
 from utils.validator import validate_sql, is_safe
 from db.executor import execute_query
@@ -28,13 +28,14 @@ class AgentState(TypedDict):
     error: Optional[str]
     attempt: int
     cursor: object
+    previous_sql: List[str]
 
     # 🔥 NEW FIELDS
     relevant_schema: Optional[str]
     join_context: Optional[str]
 
 
-MAX_RETRIES = 2
+MAX_RETRIES = 5
 
 
 # ---------------- NODES ----------------
@@ -60,13 +61,28 @@ def join_node(state: AgentState):
 
 
 def generate_node(state: AgentState):
+
+    # 🔥 Generate SQL using question + feedback
     sql = generate_sql(
-        state["question"] + state["feedback"],
+        state["question"] + "\n" + state["feedback"],
         state["relevant_schema"],
         state["join_context"]
     )
 
-    return {**state, "sql": sql, "feedback": ""}
+    # 🔥 Maintain history
+    previous_sql = state.get("previous_sql", []).copy()
+
+    if state.get("sql"):  # avoid adding None on first run
+        previous_sql.append(state["sql"])
+
+    return {
+        **state,
+        "sql": sql,
+        "feedback": "",          # ✅ reset feedback
+        "previous_sql": previous_sql  # ✅ store history
+    }
+
+
 
 
 def validate_node(state: AgentState):
@@ -98,13 +114,53 @@ def intent_node(state: AgentState):
     )
 
     if not result.get("is_correct", True):
+
+        issue = result.get("issue", "")
+
+        previous_attempts = "\n".join(state.get("previous_sql", []))
+
+        feedback = f"""
+        Fix the SQL query.
+
+        Issue:
+        {issue}
+
+        Reasoning Guidelines:
+        - Ensure aggregation level matches grouping level
+        - If grouping is done on a derived or categorical attribute,
+        aggregation should come from the most granular (row-level) table
+        - Avoid using pre-aggregated or summary columns when grouping by finer dimensions
+        - Ensure joins follow valid relational paths
+
+        Strict Instructions:
+        - Do NOT repeat previous mistakes
+        - Re-evaluate which table provides the correct level of detail
+        # detect simple SQL
+        simple_sql = (
+            "join" not in state["sql"].lower() and
+            "group by" not in state["sql"].lower()
+        )
+
+        if simple_sql:
+            return state  # ✅ accept directly
+
+        Previous attempts:
+        {previous_attempts}
+
+        Last incorrect SQL:
+        {state.get("sql", "")}
+        """
+
+
         return {
             **state,
-            "feedback": f"\nFix this issue: {result.get('issue')}",
+            "feedback": feedback,
             "attempt": state["attempt"] + 1,
         }
 
     return state
+
+
 
 
 def execute_node(state: AgentState):

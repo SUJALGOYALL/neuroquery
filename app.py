@@ -47,7 +47,8 @@ if question:
         "attempt": 0,
         "cursor": cursor,
         "relevant_schema": None,
-        "join_context": None
+        "join_context": None,
+        "previous_sql": []
     }
 
     st.write("🤖 Running AI Agent...")
@@ -65,7 +66,9 @@ if question:
 
     # ================= OUTPUT =================
 
-    tab1, tab2, tab3 = st.tabs(["📊 Result", "🧠 SQL", "🐞 Debug"])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["📊 Result", "🧠 SQL", "⚠️ Feedback", "🐞 Debug"]
+    )
 
     # ===== RESULT =====
     with tab1:
@@ -81,12 +84,22 @@ if question:
         st.subheader("🧠 Final SQL")
         st.code(result.get("sql", "No SQL generated"), language="sql")
 
-    # ===== DEBUG =====
+    # ===== FEEDBACK =====
     with tab3:
-        st.subheader("🐞 Debug Info")
+        st.subheader("⚠️ Agent Feedback")
 
-        st.write("Attempts:", result.get("attempt"))
-        st.write("Final Feedback:", result.get("feedback"))
+        feedback = result.get("feedback", "").strip()
+
+        st.write("🔁 Attempts used:", result.get("attempt", 0))
+
+        if feedback:
+            st.code(feedback, language="text")
+        else:
+            st.success("No issues detected 🎉")
+
+    # ===== DEBUG =====
+    with tab4:
+        st.subheader("🐞 Debug Info")
 
         with st.expander("📦 Full Schema"):
             st.text(full_schema)

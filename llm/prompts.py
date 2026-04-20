@@ -71,48 +71,87 @@ GENERATED SQL:
 RELEVANT SCHEMA:
 {schema}
 
-VALID RELATIONSHIPS (joins):
+VALID RELATIONSHIPS:
 {join_context}
 
 OPTIONAL HINT:
 {hint if hint else "None"}
 
 YOUR TASK:
-Determine whether the SQL correctly answers the user's question.
+Decide if the SQL correctly answers the question.
 
-Evaluate strictly on:
+You MUST evaluate:
 
-1. TABLE USAGE
-- Correct tables used?
-- Missing or unnecessary tables?
+1) TABLE SELECTION
+- Are the right tables used?
+- Any missing or unnecessary tables?
 
-2. JOIN CORRECTNESS
-- Joins valid according to relationships?
-- Missing join paths?
-- Any incorrect join condition?
+2) JOIN CORRECTNESS
+- Do joins follow valid relationships?
+- Are join paths logically complete?
 
-3. FILTER LOGIC
-- WHERE clause matches user intent?
+3) FILTER LOGIC
+- Do WHERE conditions match the intent?
 
-4. AGGREGATION & GRANULARITY
-- Does aggregation match the question?
-- Is data level correct?
-  (e.g., order-level vs item-level mismatch)
+4) AGGREGATION & GRANULARITY (CRITICAL)
+- Does aggregation level match grouping level?
+- Is the aggregation source at the correct level of detail?
 
-5. OUTPUT
-- Are selected columns correct?
+GUIDELINES FOR GRANULARITY:
+- Identify grouping level (e.g., per user, per category, per date)
+- Identify aggregation source (columns used inside SUM/COUNT/etc.)
+- If grouping is at a detailed level (e.g., category/product/user),
+  aggregation must come from the most granular table involved
+- Avoid using pre-aggregated or summary columns when grouping by finer dimensions
+- If mismatch exists → mark incorrect
+
+GRANULARITY ANALYSIS (VERY IMPORTANT):
+
+You MUST explicitly reason about data granularity:
+
+1. Identify GROUPING LEVEL:
+   - What level is the result grouped at? (e.g., per user, per category)
+
+2. Identify AGGREGATION SOURCE:
+   - Which column is used inside aggregate functions?
+
+3. Compare Levels:
+   - Does aggregation source represent data at the SAME or LOWER level?
+
+4. Detect MISMATCH:
+   - If aggregation comes from a table that represents a higher-level summary,
+     then it is incorrect
+
+5. Prefer BASE-LEVEL DATA:
+   - Aggregation should come from the most detailed (row-level) data
+   - Avoid using pre-aggregated or summary tables when grouping by finer dimensions
+
+IMPORTANT:
+- Do NOT assume a table is granular just because it contains numeric values
+- Carefully analyze relationships and joins to determine actual data level
+
+
+SIMPLE QUERY RULE:
+- If the question is a simple retrieval (e.g., "show all users", "list products")
+- AND SQL uses a single relevant table correctly
+→ mark as CORRECT
+→ do NOT expect joins or aggregation
+
+5) OUTPUT CORRECTNESS
+- Does SELECT return what user asked?
 
 RULES:
 - Only SELECT queries allowed
 - If user intent is DELETE/UPDATE → SELECT equivalent is acceptable
-- DO NOT generate or modify SQL
-- DO NOT suggest corrected query
-- ONLY evaluate correctness
+- DO NOT generate or fix SQL
 
-Return ONLY valid JSON:
+
+
+Return ONLY JSON:
 
 {{
   "is_correct": true or false,
-  "issue": "clear and specific explanation if incorrect, else empty string"
+  "issue": "clear, specific explanation of the problem"
 }}
 """
+
