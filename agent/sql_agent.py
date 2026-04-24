@@ -7,6 +7,7 @@ from utils.validator import validate_sql, is_safe
 from db.executor import execute_query
 from correction.intent_checker import check_intent
 
+from typing import Dict
 # 🔥 NEW IMPORTS
 from rag.rag_pipeline import RAGPipeline
 from utils.join_graph import build_join_graph
@@ -21,6 +22,7 @@ from utils.schema import get_foreign_keys
 # ---------------- STATE ----------------
 class AgentState(TypedDict):
     question: str
+     
     schema: str
     sql: Optional[str]
     feedback: str
@@ -33,10 +35,20 @@ class AgentState(TypedDict):
     # 🔥 NEW FIELDS
     relevant_schema: Optional[str]
     join_context: Optional[str]
+    debug: List[Dict]
 
 
 MAX_RETRIES = 5
 
+
+
+def log_debug(state, node, info):
+    logs = state.get("debug", []).copy()
+    logs.append({
+        "node": node,
+        "info": info
+    })
+    return logs
 
 # ---------------- NODES ----------------
 
@@ -60,39 +72,90 @@ def join_node(state: AgentState):
     return {**state, "join_context": join_context}
 
 
+# def generate_node(state: AgentState):
+
+#     # 🔥 Generate SQL using question + feedback
+#     sql = generate_sql(
+#         state["question"] + "\n" + state["feedback"],
+#         state["relevant_schema"],
+#         state["join_context"]
+#     )
+
+#     # 🔥 Maintain history
+#     previous_sql = state.get("previous_sql", []).copy()
+
+#     if state.get("sql"):  # avoid adding None on first run
+#         previous_sql.append(state["sql"])
+
+#     return {
+#         **state,
+#         "sql": sql,
+#         "feedback": "",          # ✅ reset feedback
+#         "previous_sql": previous_sql  # ✅ store history
+#     }
+
 def generate_node(state: AgentState):
 
-    # 🔥 Generate SQL using question + feedback
     sql = generate_sql(
         state["question"] + "\n" + state["feedback"],
         state["relevant_schema"],
         state["join_context"]
     )
 
-    # 🔥 Maintain history
     previous_sql = state.get("previous_sql", []).copy()
 
-    if state.get("sql"):  # avoid adding None on first run
+    if state.get("sql"):
         previous_sql.append(state["sql"])
+
+    debug = log_debug(state, "GENERATE", {
+        "question": state["question"],
+        "generated_sql": sql
+    })
 
     return {
         **state,
         "sql": sql,
-        "feedback": "",          # ✅ reset feedback
-        "previous_sql": previous_sql  # ✅ store history
+        "feedback": "",
+        "previous_sql": previous_sql,
+        "debug": debug   # 🔥 ADD
     }
 
 
 
 
+# def validate_node(state: AgentState):
+#     is_valid, parsed = validate_sql(state["sql"])
+
+#     if not is_valid:
+#         return {
+#             **state,
+#             "feedback": f"\nFix syntax error: {parsed}",
+#             "attempt": state["attempt"] + 1,
+#         }
+
+#     if not is_safe(state["sql"]):
+#         return {
+#             **state,
+#             "feedback": "\nConvert DELETE/UPDATE into SELECT.",
+#             "attempt": state["attempt"] + 1,
+#         }
+
+#     return state
 def validate_node(state: AgentState):
     is_valid, parsed = validate_sql(state["sql"])
+
+    debug = log_debug(state, "VALIDATE", {
+        "sql": state["sql"],
+        "is_valid": is_valid,
+        "error": parsed if not is_valid else None
+    })
 
     if not is_valid:
         return {
             **state,
             "feedback": f"\nFix syntax error: {parsed}",
             "attempt": state["attempt"] + 1,
+            "debug": debug
         }
 
     if not is_safe(state["sql"]):
@@ -100,9 +163,10 @@ def validate_node(state: AgentState):
             **state,
             "feedback": "\nConvert DELETE/UPDATE into SELECT.",
             "attempt": state["attempt"] + 1,
+            "debug": debug
         }
 
-    return state
+    return {**state, "debug": debug}
 
 
 def intent_node(state: AgentState):
@@ -112,6 +176,11 @@ def intent_node(state: AgentState):
         state["relevant_schema"],
         state["join_context"]
     )
+    debug = log_debug(state, "INTENT", {
+        "sql": state["sql"],
+        "is_correct": result.get("is_correct"),
+        "issue": result.get("issue")
+    })
 
     if not result.get("is_correct", True):
 
@@ -156,9 +225,10 @@ def intent_node(state: AgentState):
             **state,
             "feedback": feedback,
             "attempt": state["attempt"] + 1,
+            "debug": debug
         }
 
-    return state
+    return {**state, "debug": debug}
 
 
 

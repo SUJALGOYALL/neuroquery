@@ -1,6 +1,6 @@
 from llm.groq_client import client
 from llm.prompts import sql_prompt
-
+import requests
 
 # ================= CLEAN SQL =================
 def clean_sql(sql: str) -> str:
@@ -16,7 +16,38 @@ def clean_sql(sql: str) -> str:
 
 
 # ================= CORE LLM CALL =================
+
+import requests
+
 def call_llm(prompt: str) -> str:
+    """
+    Generic LLM caller (now using Ollama)
+    """
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "sql-tinyllama",
+                "prompt": f"""You strictly follow instructions and output exactly what is asked.
+
+{prompt}""",
+                "stream": False,
+                "options": {
+                    "temperature": 0
+                }
+            }
+        )
+
+        if response.status_code != 200:
+            raise Exception(response.text)
+
+        return response.json()["response"].strip()
+
+    except Exception as e:
+        raise Exception(f"Ollama Call Failed: {e}")
+
+
+def call_llm_groq(prompt: str) -> str:
     """
     Generic LLM caller (used everywhere)
     """
@@ -43,28 +74,46 @@ def call_llm(prompt: str) -> str:
 
 
 # ================= GENERATE SQL =================
+# def generate_sql(question, schema, join_context=""):
+#     """
+#     SQL generation function
+#     """
+
+#     prompt = sql_prompt(schema, question, join_context)
+
+#     # 🔥 Extra enforcement layer
+#     strict_rules = """
+# STRICT OUTPUT RULES:
+# - Return ONLY SQL query
+# - No markdown (no ``` )
+# - No explanation
+# - No comments
+# - Do NOT start with 'sql'
+# - Query must be valid PostgreSQL
+# - ONLY SELECT queries allowed
+# """
+
+#     final_prompt = prompt + "\n" + strict_rules
+
+#     raw_sql = call_llm(final_prompt)
+
+#     return clean_sql(raw_sql)
+
 def generate_sql(question, schema, join_context=""):
-    """
-    SQL generation function
-    """
 
-    prompt = sql_prompt(schema, question, join_context)
+    prompt = f"""
+Convert the question into SQL.
 
-    # 🔥 Extra enforcement layer
-    strict_rules = """
-STRICT OUTPUT RULES:
-- Return ONLY SQL query
-- No markdown (no ``` )
-- No explanation
-- No comments
-- Do NOT start with 'sql'
-- Query must be valid PostgreSQL
-- ONLY SELECT queries allowed
+Schema:
+{schema}
+
+Question:
+{question}
+
+SQL:
 """
 
-    final_prompt = prompt + "\n" + strict_rules
-
-    raw_sql = call_llm(final_prompt)
+    raw_sql = call_llm(prompt)
 
     return clean_sql(raw_sql)
 
@@ -74,4 +123,4 @@ def call_model(prompt: str) -> str:
     """
     Used for intent checker / future agents
     """
-    return call_llm(prompt)
+    return call_llm_groq(prompt)

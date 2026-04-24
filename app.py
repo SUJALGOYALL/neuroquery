@@ -48,6 +48,7 @@ if question:
         "cursor": cursor,
         "relevant_schema": None,
         "join_context": None,
+        "debug": [],
         "previous_sql": []
     }
 
@@ -109,6 +110,14 @@ if question:
 
         with st.expander("🔗 Join Context"):
             st.text(result.get("join_context"))
+            
+        st.subheader("🔍 Node Debug Logs")
+
+        debug_logs = result.get("debug", [])
+
+        for log in debug_logs:
+            with st.expander(f"🧠 {log['node']}"):
+                st.json(log["info"])
 
     # ================= SIDEBAR =================
     st.sidebar.title("🧾 Debug Logs")
